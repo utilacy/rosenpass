@@ -61,7 +61,7 @@ impl<B, T> RefMaker<B, T> {
     }
 
     /// Returns the size in bytes required by the target type `T`.
-    /// This is currently defined as [std::mem::size_of] of `T`.
+    /// This is currently defined as [`std::mem::size_of::<T>`] of `T`.
     pub const fn target_size() -> usize {
         std::mem::size_of::<T>()
     }
