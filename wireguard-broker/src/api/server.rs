@@ -1,3 +1,6 @@
+//! This module provides the [BrokerServer] which handles requests to interact with wireguard.
+//! Specifically, it allows requests to set a pre-shared key for a wireguard interface.
+
 use std::borrow::BorrowMut;
 
 use rosenpass_secret_memory::{Public, Secret};
@@ -7,12 +10,16 @@ use crate::WireGuardBroker;
 
 use super::config::{NetworkBrokerConfigBuilder, NetworkBrokerConfigErr};
 
+/// Error variants for the [BrokerServer].
 #[derive(thiserror::Error, Debug, Clone, Eq, PartialEq)]
 pub enum BrokerServerError {
+    /// Indicates that an unknown request type was encountered.
     #[error("No such request type: {}", .0)]
     NoSuchRequestType(u8),
+    /// Indicates that an invalid message was sent.
     #[error("Invalid message received.")]
     InvalidMessage,
+    /// Indicates an error when configuration the network broker.
     #[error("Network Broker Config error: {0}")]
     BrokerError(NetworkBrokerConfigErr),
 }
@@ -52,10 +59,10 @@ where
 
     /// Processes a message (at the moment only setting the pre-shared key is supported)
     /// and takes the appropriate actions.
-    /// 
+    ///
     /// # Errors
     /// - [BrokerServerError::InvalidMessage] if the message is not properly formatted or refers to
-    ///   an unsupported message type. 
+    ///   an unsupported message type.
     pub fn handle_message(
         &mut self,
         req: &[u8],
