@@ -50,7 +50,12 @@ where
         Self { inner }
     }
 
+    /// Processes a message (at the moment only setting the pre-shared key is supported)
+    /// and takes the appropriate actions.
     /// 
+    /// # Errors
+    /// - [BrokerServerError::InvalidMessage] if the message is not properly formatted or refers to
+    ///   an unsupported message type. 
     pub fn handle_message(
         &mut self,
         req: &[u8],
@@ -74,9 +79,10 @@ where
 
     /// Sets the pre-shared key for the interface identified in `req` to the pre-shared key
     /// specified in `req`.
-    /// 
+    ///
     /// # Errors
-    /// - [InvalidMessage](BrokerServerError::InvalidMessage) 
+    /// - [InvalidMessage](BrokerServerError::InvalidMessage) if the `iface` specified in `req` is
+    ///   longer than 255 bytes or not correctly encoded in utf8.
     fn handle_set_psk(
         &mut self,
         req: &SetPskRequest,
