@@ -24,11 +24,18 @@ impl From<msgs::InvalidMessageTypeError> for BrokerServerError {
     }
 }
 
+/// The broker server. It requires an inner [WireGuardBroker] and an error type such
+/// that the [msgs::SetPskError] implements [From] for the error type.
+/// # Type Parameters
+/// - `Err`: The used error type. Must be chosen such that [msgs::SetPskError] implements
+///   [From<Err>](From)
+///- `Inner`: A [WireGuardBroker]-type parametrized with `Err`.
 pub struct BrokerServer<Err, Inner>
 where
     Inner: WireGuardBroker<Error = Err>,
     msgs::SetPskError: From<Err>,
 {
+    /// The inner [WireGuardBroker].
     inner: Inner,
 }
 
@@ -38,10 +45,12 @@ where
     msgs::SetPskError: From<Err>,
     Err: std::fmt::Debug,
 {
+    /// Creates a new [BrokerServer] from a [WireGuardBroker].
     pub fn new(inner: Inner) -> Self {
         Self { inner }
     }
 
+    /// 
     pub fn handle_message(
         &mut self,
         req: &[u8],
