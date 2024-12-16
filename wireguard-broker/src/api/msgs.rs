@@ -25,6 +25,8 @@ pub struct Envelope<M: AsBytes + FromBytes> {
 }
 
 /// Message format for requests to set a pre-shared key.
+/// # Example
+/// 
 #[repr(packed)]
 #[derive(AsBytes, FromBytes, FromZeroes)]
 pub struct SetPskRequest {
@@ -39,15 +41,27 @@ pub struct SetPskRequest {
 }
 
 impl SetPskRequest {
+
+    /// Gets the interface specification as byte slice.
     pub fn iface_bin(&self) -> &[u8] {
         let len = self.iface_size as usize;
         &self.iface_buf[..len]
     }
 
+    /// Gets the interface specification as a `&str`.
+    ///
+    /// # Errors
+    /// Returns a [Utf8Error] if the interface specification isn't utf8 encoded.
     pub fn iface(&self) -> Result<&str, Utf8Error> {
         from_utf8(self.iface_bin())
     }
 
+    /// Sets the interface specification to `iface`. No check is made wether `icace` is correctly
+    /// encoded as utf8.
+    ///
+    /// # Result
+    /// Returns [None] if `iface` is longer than 255 bytes. Otherwise, it returns
+    /// [Some(())](Some).
     pub fn set_iface_bin(&mut self, iface: &[u8]) -> Option<()> {
         (iface.len() < 256).then_some(())?; // Assert iface.len() < 256
 
@@ -59,6 +73,11 @@ impl SetPskRequest {
         Some(())
     }
 
+    /// Sets the interface specification to `iface`.
+    ///
+    /// # Result
+    /// Returns [None] if `iface` is longer than 255 bytes. Otherwise, it returns
+    /// [Some(())](Some).
     pub fn set_iface(&mut self, iface: &str) -> Option<()> {
         self.set_iface_bin(iface.as_bytes())
     }

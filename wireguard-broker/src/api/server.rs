@@ -72,12 +72,17 @@ where
         Ok(res.bytes().len())
     }
 
+    /// Sets the pre-shared key for the interface identified in `req` to the pre-shared key
+    /// specified in `req`.
+    /// 
+    /// # Errors
+    /// - [InvalidMessage](BrokerServerError::InvalidMessage) 
     fn handle_set_psk(
         &mut self,
         req: &SetPskRequest,
         res: &mut SetPskResponse,
     ) -> Result<(), BrokerServerError> {
-        // Using unwrap here since lenses can not return fixed-size arrays
+        // Using unwrap here since lenses can not return fixed-size arrays.
         // TODO: Slices should give access to fixed size arrays
         let peer_id = Public::from_slice(&req.peer_id);
         let psk = Secret::from_slice(&req.psk);
