@@ -13,8 +13,9 @@ use std::{
     mem::size_of,
     ops::Deref,
 };
-
+use std::marker::PhantomData;
 use anyhow::{bail, ensure, Context, Result};
+use assert_tv::{TestVector, TestVectorNOP};
 use memoffset::span_of;
 use zerocopy::{AsBytes, FromBytes, Ref};
 
@@ -33,6 +34,10 @@ use rosenpass_util::{
     time::Timebase,
 };
 
+use crate::test_vector_sets::{CycledBiscuitSecretKeyTestValues,
+                              EncapsAndMixTestValues, StoreBiscuitTestValues,
+                              HandleInitiationTestValues,
+                              HandleInitHelloTestValues};
 use crate::{hash_domains, msgs::*, RosenpassError};
 
 use super::basic_types::{
@@ -75,7 +80,7 @@ use rosenpass_util::trace_bench::Trace as _;
 ///
 /// See [Self::poll] on how to use a CryptoServer with poll.
 #[derive(Debug)]
-pub struct CryptoServer {
+pub struct CryptoServer<TV: TestVector = TestVectorNOP> {
     /// The source of most timing information for the Rosenpass protocol
     ///
     /// We store most timing information in the form of f64 values, relative to a point stored in
@@ -136,6 +141,11 @@ pub struct CryptoServer {
     ///
     /// See [CryptoServer::handle_msg_under_load], and [CryptoServer::active_or_retired_cookie_secrets].
     pub cookie_secrets: [CookieSecret; 2],
+
+    /// Marker to tie this server to the state of the selected [assert_tv::TestVector] context.
+    /// In a production context, this defaults to [assert_tv::TestVectorNOP] which disabled all test-vectors.
+    /// In tests where test vectors are checked or initialized, this is selected to be [assert_tv::TestVectorActive].
+    _test_vector_context: PhantomData<TV>,
 }
 
 /// Specifies the protocol version used by a peer.
@@ -593,19 +603,19 @@ pub trait Mortal {
     /// # Examples
     ///
     /// See [MortalExt]
-    fn created_at(&self, srv: &CryptoServer) -> Option<Timing>;
+    fn created_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing>;
     /// The time where [Lifecycle::Young] -> [Lifecycle::Retired]
     ///
     /// # Examples
     ///
     /// See [MortalExt]
-    fn retire_at(&self, srv: &CryptoServer) -> Option<Timing>;
+    fn retire_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing>;
     /// The time where [Lifecycle::Retired] -> [Lifecycle::Dead]
     ///
     /// # Examples
     ///
     /// See [MortalExt]
-    fn die_at(&self, srv: &CryptoServer) -> Option<Timing>;
+    fn die_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing>;
 }
 
 // BUSINESS LOGIC DATA STRUCTURES ////////////////
@@ -720,7 +730,7 @@ impl PeerPtr {
     /// # Examples
     ///
     /// See [Self]
-    pub fn get<'a>(&self, srv: &'a CryptoServer) -> &'a Peer {
+    pub fn get<'a, TV: TestVector>(&self, srv: &'a CryptoServer<TV>) -> &'a Peer {
         &srv.peers[self.0]
     }
 
@@ -733,7 +743,7 @@ impl PeerPtr {
     /// # Examples
     ///
     /// See [Self]
-    pub fn get_mut<'a>(&self, srv: &'a mut CryptoServer) -> &'a mut Peer {
+    pub fn get_mut<'a, TV: TestVector>(&self, srv: &'a mut CryptoServer<TV>) -> &'a mut Peer {
         &mut srv.peers[self.0]
     }
 
@@ -784,7 +794,7 @@ impl IniHsPtr {
     /// # Examples
     ///
     /// See [PeerPtr]
-    pub fn get<'a>(&self, srv: &'a CryptoServer) -> &'a Option<InitiatorHandshake> {
+    pub fn get<'a, TV: TestVector>(&self, srv: &'a CryptoServer<TV>) -> &'a Option<InitiatorHandshake> {
         &srv.peers[self.0].handshake
     }
 
@@ -797,7 +807,7 @@ impl IniHsPtr {
     /// # Examples
     ///
     /// See [PeerPtr]
-    pub fn get_mut<'a>(&self, srv: &'a mut CryptoServer) -> &'a mut Option<InitiatorHandshake> {
+    pub fn get_mut<'a, TV: TestVector>(&self, srv: &'a mut CryptoServer<TV>) -> &'a mut Option<InitiatorHandshake> {
         &mut srv.peers[self.0].handshake
     }
 
@@ -822,9 +832,9 @@ impl IniHsPtr {
     /// # Panic & Safety
     ///
     /// The function panics if the peer referenced by this does not exist.
-    pub fn insert<'a>(
+    pub fn insert<'a, TV: TestVector>(
         &self,
-        srv: &'a mut CryptoServer,
+        srv: &'a mut CryptoServer<TV>,
         hs: InitiatorHandshake,
     ) -> Result<&'a mut InitiatorHandshake> {
         srv.register_session(hs.core.sidi, self.peer())?;
@@ -840,7 +850,7 @@ impl IniHsPtr {
     /// # Panic & Safety
     ///
     /// The function panics if the peer referenced by this does not exist.
-    pub fn take(&self, srv: &mut CryptoServer) -> Option<InitiatorHandshake> {
+    pub fn take<TV: TestVector>(&self, srv: &mut CryptoServer<TV>) -> Option<InitiatorHandshake> {
         let r = self.peer().get_mut(srv).handshake.take();
         if let Some(ref stale) = r {
             srv.unregister_session_if_vacant(stale.core.sidi, self.peer());
@@ -859,7 +869,7 @@ impl SessionPtr {
     /// # Examples
     ///
     /// See [PeerPtr]
-    pub fn get<'a>(&self, srv: &'a CryptoServer) -> &'a Option<Session> {
+    pub fn get<'a, TV: TestVector>(&self, srv: &'a CryptoServer<TV>) -> &'a Option<Session> {
         &srv.peers[self.0].session
     }
 
@@ -872,7 +882,7 @@ impl SessionPtr {
     /// # Examples
     ///
     /// See [PeerPtr]
-    pub fn get_mut<'a>(&self, srv: &'a mut CryptoServer) -> &'a mut Option<Session> {
+    pub fn get_mut<'a, TV: TestVector>(&self, srv: &'a mut CryptoServer<TV>) -> &'a mut Option<Session> {
         &mut srv.peers[self.0].session
     }
 
@@ -893,7 +903,7 @@ impl SessionPtr {
     /// # Panic & Safety
     ///
     /// The function panics if the peer referenced by this does not exist.
-    pub fn insert<'a>(&self, srv: &'a mut CryptoServer, ses: Session) -> Result<&'a mut Session> {
+    pub fn insert<'a, TV: TestVector>(&self, srv: &'a mut CryptoServer<TV>, ses: Session) -> Result<&'a mut Session> {
         self.take(srv);
         srv.register_session(ses.sidm, self.peer())?;
         Ok(self.peer().get_mut(srv).session.insert(ses))
@@ -906,7 +916,7 @@ impl SessionPtr {
     /// # Panic & Safety
     ///
     /// The function panics if the peer referenced by this does not exist.
-    pub fn take(&self, srv: &mut CryptoServer) -> Option<Session> {
+    pub fn take<TV: TestVector>(&self, srv: &mut CryptoServer<TV>) -> Option<Session> {
         let r = self.peer().get_mut(srv).session.take();
         if let Some(ref stale) = r {
             srv.unregister_session_if_vacant(stale.sidm, self.peer());
@@ -917,24 +927,24 @@ impl SessionPtr {
 
 impl BiscuitKeyPtr {
     /// Access the referenced biscuit key
-    pub fn get<'a>(&self, srv: &'a CryptoServer) -> &'a BiscuitKey {
+    pub fn get<'a, TV: TestVector>(&self, srv: &'a CryptoServer<TV>) -> &'a BiscuitKey {
         &srv.biscuit_keys[self.0]
     }
 
     /// Mutable access to the referenced biscuit key
-    pub fn get_mut<'a>(&self, srv: &'a mut CryptoServer) -> &'a mut BiscuitKey {
+    pub fn get_mut<'a, TV: TestVector>(&self, srv: &'a mut CryptoServer<TV>) -> &'a mut BiscuitKey {
         &mut srv.biscuit_keys[self.0]
     }
 }
 
 impl ServerCookieSecretPtr {
     /// Access the referenced cookie secret
-    pub fn get<'a>(&self, srv: &'a CryptoServer) -> &'a CookieSecret {
+    pub fn get<'a, TV: TestVector>(&self, srv: &'a CryptoServer<TV>) -> &'a CookieSecret {
         &srv.cookie_secrets[self.0]
     }
 
     /// Mutable access to the referenced cookie secret
-    pub fn get_mut<'a>(&self, srv: &'a mut CryptoServer) -> &'a mut CookieSecret {
+    pub fn get_mut<'a, TV: TestVector>(&self, srv: &'a mut CryptoServer<TV>) -> &'a mut CookieSecret {
         &mut srv.cookie_secrets[self.0]
     }
 }
@@ -949,7 +959,7 @@ impl PeerCookieValuePtr {
     /// # Examples
     ///
     /// See [PeerPtr]
-    pub fn get<'a>(&self, srv: &'a CryptoServer) -> Option<&'a CookieStore<COOKIE_SECRET_LEN>> {
+    pub fn get<'a, TV: TestVector>(&self, srv: &'a CryptoServer<TV>) -> Option<&'a CookieStore<COOKIE_SECRET_LEN>> {
         srv.peers[self.0]
             .handshake
             .as_ref()
@@ -967,7 +977,7 @@ impl PeerCookieValuePtr {
     /// # Examples
     ///
     /// See [PeerPtr]
-    pub fn update_mut<'a>(&self, srv: &'a mut CryptoServer) -> Option<&'a mut [u8]> {
+    pub fn update_mut<'a, TV: TestVector>(&self, srv: &'a mut CryptoServer<TV>) -> Option<&'a mut [u8]> {
         let timebase = srv.timebase.clone();
 
         if let Some(cs) = PeerPtr(self.0)
@@ -999,7 +1009,7 @@ impl KnownInitConfResponsePtr {
     /// # Panic & Safety
     ///
     /// The function panics if the peer referenced by this KnownInitConfResponsePtr does not exist.
-    pub fn get<'a>(&self, srv: &'a CryptoServer) -> Option<&'a KnownInitConfResponse> {
+    pub fn get<'a, TV: TestVector>(&self, srv: &'a CryptoServer<TV>) -> Option<&'a KnownInitConfResponse> {
         self.peer().get(srv).known_init_conf_response.as_ref()
     }
 
@@ -1008,7 +1018,7 @@ impl KnownInitConfResponsePtr {
     /// # Panic & Safety
     ///
     /// The function panics if the peer referenced by this KnownInitConfResponsePtr does not exist.
-    pub fn get_mut<'a>(&self, srv: &'a mut CryptoServer) -> Option<&'a mut KnownInitConfResponse> {
+    pub fn get_mut<'a, TV: TestVector>(&self, srv: &'a mut CryptoServer<TV>) -> Option<&'a mut KnownInitConfResponse> {
         self.peer().get_mut(srv).known_init_conf_response.as_mut()
     }
 
@@ -1023,7 +1033,7 @@ impl KnownInitConfResponsePtr {
     /// - the peer referenced by this KnownInitConfResponsePtr does not exist
     /// - the peer contains a KnownInitConfResponse (i.e. if [Peer::known_init_conf_response] is Some(...)), but the index to this KnownInitConfResponsePtr is missing (i.e. there is no appropriate index
     ///   value in [CryptoServer::index])
-    pub fn remove(&self, srv: &mut CryptoServer) -> Option<KnownInitConfResponse> {
+    pub fn remove<TV: TestVector>(&self, srv: &mut CryptoServer<TV>) -> Option<KnownInitConfResponse> {
         let peer = self.peer();
         let val = peer.get_mut(srv).known_init_conf_response.take()?;
         let lookup_key = PeerIndexKey::KnownInitConfResponse(val.request_mac);
@@ -1042,7 +1052,7 @@ impl KnownInitConfResponsePtr {
     /// - the peer referenced by this KnownInitConfResponsePtr does not exist
     /// - the peer contains a KnownInitConfResponse (i.e. if [Peer::known_init_conf_response] is Some(...)), but the index to this KnownInitConfResponsePtr is missing (i.e. there is no appropriate index
     ///   value in [CryptoServer::index])
-    pub fn insert(&self, srv: &mut CryptoServer, known_response: KnownInitConfResponse) {
+    pub fn insert<TV: TestVector>(&self, srv: &mut CryptoServer<TV>, known_response: KnownInitConfResponse) {
         self.remove(srv).discard_result();
 
         let index_key = PeerIndexKey::KnownInitConfResponse(known_response.request_mac);
@@ -1081,8 +1091,8 @@ impl KnownInitConfResponsePtr {
     /// # Panic & Safety
     ///
     /// The function panics if the peer referenced in the index does not exist.
-    pub fn lookup_for_request_msg(
-        srv: &CryptoServer,
+    pub fn lookup_for_request_msg<TV: TestVector>(
+        srv: &CryptoServer<TV>,
         req: &Envelope<InitConf>,
     ) -> Option<KnownInitConfResponsePtr> {
         let index_key = Self::index_key_for_msg(srv, req);
@@ -1117,8 +1127,8 @@ impl KnownInitConfResponsePtr {
     /// # Panic & Safety
     ///
     /// The function panics if the peer referenced to by `peer` does not exist.
-    pub fn insert_for_request_msg(
-        srv: &mut CryptoServer,
+    pub fn insert_for_request_msg<TV: TestVector>(
+        srv: &mut CryptoServer<TV>,
         peer: PeerPtr,
         req: &Envelope<InitConf>,
         res: Envelope<EmptyData>,
@@ -1137,8 +1147,8 @@ impl KnownInitConfResponsePtr {
     /// Calculate an appropriate index key hash for `req`
     ///
     /// Merely forwards [KnownResponseHasher::hash] with hasher [CryptoServer::known_response_hasher] from `srv`.
-    pub fn index_key_hash_for_msg(
-        srv: &CryptoServer,
+    pub fn index_key_hash_for_msg<TV: TestVector>(
+        srv: &CryptoServer<TV>,
         req: &Envelope<InitConf>,
     ) -> KnownResponseHash {
         srv.known_response_hasher.hash(req)
@@ -1147,14 +1157,14 @@ impl KnownInitConfResponsePtr {
     /// Calculate an appropriate index key for `req`
     ///
     /// Merely forwards [Self::index_key_for_msg] and wraps the result in [PeerIndexKey::KnownInitConfResponse]
-    pub fn index_key_for_msg(srv: &CryptoServer, req: &Envelope<InitConf>) -> PeerIndexKey {
+    pub fn index_key_for_msg<TV: TestVector>(srv: &CryptoServer<TV>, req: &Envelope<InitConf>) -> PeerIndexKey {
         Self::index_key_hash_for_msg(srv, req).apply(PeerIndexKey::KnownInitConfResponse)
     }
 }
 
 // DATABASE //////////////////////////////////////
 
-impl CryptoServer {
+impl<TV: TestVector> CryptoServer<TV> {
     /// Constructing a CryptoServer
     ///
     /// # Examples
@@ -1176,7 +1186,7 @@ impl CryptoServer {
     ///
     /// Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn new(sk: SSk, pk: SPk) -> CryptoServer {
+    pub fn new(sk: SSk, pk: SPk) -> CryptoServer<TV> {
         let tb = Timebase::default();
         CryptoServer {
             sskm: sk,
@@ -1191,6 +1201,7 @@ impl CryptoServer {
             known_response_hasher: KnownResponseHasher::new(),
             peer_poll_off: 0,
             cookie_secrets: [CookieStore::new(), CookieStore::new()],
+            _test_vector_context: Default::default(),
         }
     }
 
@@ -1407,6 +1418,11 @@ impl CryptoServer {
         let r = if t < u { a } else { b };
         let tb = self.timebase.clone();
         r.get_mut(self).randomize(&tb);
+        let test_values: CycledBiscuitSecretKeyTestValues = TV::initialize_values();
+        TV::expose_mut_value(
+            &test_values.cycled_biscuit_secret_key,
+            &mut self.biscuit_keys[r.0].value
+        );
         r
     }
 
@@ -1583,30 +1599,30 @@ impl<const N: usize> CookieStore<N> {
 
 impl Mortal for IniHsPtr {
     /// At [InitiatorHandshake::created_at]
-    fn created_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn created_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.get(srv).as_ref().map(|hs| hs.created_at)
     }
 
     /// No retirement phase; same as [Self::die_at]
-    fn retire_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn retire_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.die_at(srv)
     }
 
     /// [Self::created_at] plus [REJECT_AFTER_TIME]
-    fn die_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn die_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.created_at(srv).map(|t| t + REJECT_AFTER_TIME)
     }
 }
 
 impl Mortal for SessionPtr {
     /// At [Session::created_at]
-    fn created_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn created_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.get(srv).as_ref().map(|p| p.created_at)
     }
 
     /// [Self::created_at] plus [REKEY_AFTER_TIME_INITIATOR] or [REKEY_AFTER_TIME_RESPONDER]
     /// as appropriate.
-    fn retire_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn retire_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         // If we were the initiator, wait an extra ten seconds to avoid
         // both parties starting the handshake at the same time. In most situations
         // this should provide ample time for the other party to perform a
@@ -1624,14 +1640,14 @@ impl Mortal for SessionPtr {
     }
 
     /// [Self::created_at] plus [REJECT_AFTER_TIME]
-    fn die_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn die_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.created_at(srv).map(|t| t + REJECT_AFTER_TIME)
     }
 }
 
 impl Mortal for BiscuitKeyPtr {
     /// At [BiscuitKey::created_at]
-    fn created_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn created_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         let t = self.get(srv).created_at;
         if t < 0.0 {
             None
@@ -1641,19 +1657,19 @@ impl Mortal for BiscuitKeyPtr {
     }
 
     /// At [Self::created_at] plus [BISCUIT_EPOCH]
-    fn retire_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn retire_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.created_at(srv).map(|t| t + BISCUIT_EPOCH)
     }
 
     /// At [Self::retire_at] plus [BISCUIT_EPOCH]
-    fn die_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn die_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.retire_at(srv).map(|t| t + BISCUIT_EPOCH)
     }
 }
 
 impl Mortal for ServerCookieSecretPtr {
     /// At [CookieSecret::created_at]
-    fn created_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn created_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         let t = self.get(srv).created_at;
         if t < 0.0 {
             None
@@ -1663,19 +1679,19 @@ impl Mortal for ServerCookieSecretPtr {
     }
 
     /// At [Self::created_at] plus [COOKIE_SECRET_EPOCH]
-    fn retire_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn retire_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.created_at(srv).map(|t| t + COOKIE_SECRET_EPOCH)
     }
 
     /// At [Self::retire_at] plus [COOKIE_SECRET_EPOCH]
-    fn die_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn die_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.retire_at(srv).map(|t| t + COOKIE_SECRET_EPOCH)
     }
 }
 
 impl Mortal for PeerCookieValuePtr {
     /// At [CookieStore::created_at]
-    fn created_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn created_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         if let Some(cs) = self.get(srv) {
             if cs.created_at < 0.0 {
                 return None;
@@ -1687,19 +1703,19 @@ impl Mortal for PeerCookieValuePtr {
     }
 
     /// No retirement phase, so this is the same as [Self::die_at]
-    fn retire_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn retire_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.die_at(srv)
     }
 
     /// [Self::created_at] plus [PEER_COOKIE_VALUE_EPOCH]
-    fn die_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn die_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.created_at(srv).map(|t| t + PEER_COOKIE_VALUE_EPOCH)
     }
 }
 
 impl Mortal for KnownInitConfResponsePtr {
     /// At [KnownInitConfResponse::received_at]
-    fn created_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn created_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         let t = self.get(srv)?.received_at;
         if t < 0.0 {
             None
@@ -1709,12 +1725,12 @@ impl Mortal for KnownInitConfResponsePtr {
     }
 
     /// No retirement phase, so this is the same as [Self::die_at]
-    fn retire_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn retire_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.die_at(srv)
     }
 
     /// [Self::created_at] plus [REKEY_AFTER_TIME_RESPONDER]
-    fn die_at(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn die_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.created_at(srv).map(|t| t + REKEY_AFTER_TIME_RESPONDER)
     }
 }
@@ -1725,6 +1741,7 @@ impl Mortal for KnownInitConfResponsePtr {
 /// # Examples
 ///
 /// ```
+/// use assert_tv::TestVector;
 /// use rosenpass::protocol::{timing::Timing, Mortal, MortalExt, Lifecycle, CryptoServer, ProtocolVersion};
 /// use rosenpass::protocol::testutils::{ServerForTesting, time_travel_forward};
 ///
@@ -1748,15 +1765,15 @@ impl Mortal for KnownInitConfResponsePtr {
 /// };
 ///
 /// impl Mortal for Hooman {
-///     fn created_at(&self, srv: &CryptoServer) -> Option<Timing> {
+///     fn created_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
 ///         Some(self.born)
 ///     }
 ///    
-///     fn retire_at(&self, srv: &CryptoServer) -> Option<Timing> {
+///     fn retire_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
 ///         Some(self.created_at(&srv)? + self.works_for)
 ///     }
 ///    
-///     fn die_at(&self, srv: &CryptoServer) -> Option<Timing> {
+///     fn die_at<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
 ///         Some(self.retire_at(&srv)? + self.retires_for)
 ///     }
 /// }
@@ -1800,32 +1817,32 @@ pub trait MortalExt: Mortal {
     /// # Examples
     ///
     /// See [Self].
-    fn life_left(&self, srv: &CryptoServer) -> Option<Timing>;
+    fn life_left<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing>;
     /// Calculate the amount of time left before the object enters
     /// lifecycle stage [Lifecycle::Retired].
     ///
     /// # Examples
     ///
     /// See [Self].
-    fn youth_left(&self, srv: &CryptoServer) -> Option<Timing>;
+    fn youth_left<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing>;
     /// Retrieve the current [Lifecycle] stage
     ///
     /// # Examples
     ///
     /// See [Self].
-    fn lifecycle(&self, srv: &CryptoServer) -> Lifecycle;
+    fn lifecycle<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Lifecycle;
 }
 
 impl<T: Mortal> MortalExt for T {
-    fn life_left(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn life_left<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.die_at(srv).map(|t| t - srv.timebase.now())
     }
 
-    fn youth_left(&self, srv: &CryptoServer) -> Option<Timing> {
+    fn youth_left<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Option<Timing> {
         self.retire_at(srv).map(|t| t - srv.timebase.now())
     }
 
-    fn lifecycle(&self, srv: &CryptoServer) -> Lifecycle {
+    fn lifecycle<TV: TestVector>(&self, srv: &CryptoServer<TV>) -> Lifecycle {
         match (self.youth_left(srv), self.life_left(srv)) {
             (_, Some(t)) if has_happened(t, 0.0) => Lifecycle::Dead,
             (Some(t), _) if has_happened(t, 0.0) => Lifecycle::Retired,
@@ -1837,7 +1854,7 @@ impl<T: Mortal> MortalExt for T {
 
 // MESSAGE HANDLING //////////////////////////////
 
-impl CryptoServer {
+impl<TV: TestVector> CryptoServer<TV> {
     /// This is the function that a user of [Self] should use to start a new handshake.
     ///
     /// The generated message is put into the `tx_buf` parameter and the size of the message
@@ -1909,7 +1926,7 @@ pub trait HostIdentification: Display {
     fn encode(&self) -> &[u8];
 }
 
-impl CryptoServer {
+impl<TV: TestVector> CryptoServer<TV> {
     /// Process a message under load.
     ///
     /// This is one of the main entry points for the protocol. The function can be used
@@ -2931,7 +2948,7 @@ impl IniHsPtr {
     /// # Examples
     ///
     /// This is internal business logic. Please refer to the source code of [CryptoServer::initiate_handshake] and [CryptoServer::handle_msg].
-    pub fn store_msg_for_retransmission(&self, srv: &mut CryptoServer, msg: &[u8]) -> Result<()> {
+    pub fn store_msg_for_retransmission<TV: TestVector>(&self, srv: &mut CryptoServer<TV>, msg: &[u8]) -> Result<()> {
         let ih = self
             .get_mut(srv)
             .as_mut()
@@ -2971,7 +2988,7 @@ impl IniHsPtr {
     }
 
     /// Internal business logic; used to register the fact that a retransmission has happened.
-    pub fn register_retransmission(&self, srv: &mut CryptoServer) -> Result<()> {
+    pub fn register_retransmission<TV: TestVector>(&self, srv: &mut CryptoServer<TV>) -> Result<()> {
         let tb = srv.timebase.clone();
         let ih = self
             .get_mut(srv)
@@ -2993,7 +3010,7 @@ impl IniHsPtr {
 
     /// Internal business logic; used to register the fact that an immediate retransmission
     /// has happened in response to a [CookieReply] message
-    pub fn register_immediate_retransmission(&self, srv: &mut CryptoServer) -> Result<()> {
+    pub fn register_immediate_retransmission<TV: TestVector>(&self, srv: &mut CryptoServer<TV>) -> Result<()> {
         let tb = srv.timebase.clone();
         let ih = self
             .get_mut(srv)
@@ -3020,7 +3037,7 @@ where
     M: AsBytes + FromBytes,
 {
     /// Internal business logic: Calculate the message authentication code (`mac`) and also append cookie value
-    pub fn seal(&mut self, peer: PeerPtr, srv: &CryptoServer) -> Result<()> {
+    pub fn seal<TV: TestVector>(&mut self, peer: PeerPtr, srv: &CryptoServer<TV>) -> Result<()> {
         let mac = hash_domains::mac(peer.get(srv).protocol_version.keyed_hash())?
             .mix(peer.get(srv).spkt.deref())?
             .mix(&self.as_bytes()[span_of!(Self, msg_type..mac)])?;
@@ -3032,7 +3049,7 @@ where
     /// Internal business logic: Calculate and append the cookie value if `cookie_key` exists (`cookie`)
     ///
     /// This is called inside [Self::seal] and does not need to be called again separately.
-    pub fn seal_cookie(&mut self, peer: PeerPtr, srv: &CryptoServer) -> Result<()> {
+    pub fn seal_cookie<TV: TestVector>(&mut self, peer: PeerPtr, srv: &CryptoServer<TV>) -> Result<()> {
         if let Some(cookie_key) = &peer.cv().get(srv) {
             let cookie = hash_domains::cookie(KeyedHash::keyed_shake256())?
                 .mix(cookie_key.value.secret())?
@@ -3049,7 +3066,7 @@ where
     M: AsBytes + FromBytes,
 {
     /// Internal business logic: Check the message authentication code produced by [Self::seal]
-    pub fn check_seal(&self, srv: &CryptoServer, shake_or_blake: KeyedHash) -> Result<bool> {
+    pub fn check_seal<TV: TestVector>(&self, srv: &CryptoServer<TV>, shake_or_blake: KeyedHash) -> Result<bool> {
         let expected = hash_domains::mac(shake_or_blake)?
             .mix(srv.spkm.deref())?
             .mix(&self.as_bytes()[span_of!(Self, msg_type..mac)])?;
@@ -3062,7 +3079,7 @@ where
 
 impl InitiatorHandshake {
     /// Zero initialization of an InitiatorHandshake, with up to date timestamp
-    pub fn zero_with_timestamp(srv: &CryptoServer, keyed_hash: KeyedHash) -> Self {
+    pub fn zero_with_timestamp<TV: TestVector>(srv: &CryptoServer<TV>, keyed_hash: KeyedHash) -> Self {
         InitiatorHandshake {
             created_at: srv.timebase.now(),
             next: HandshakeStateMachine::RespHello,
@@ -3153,14 +3170,19 @@ impl HandshakeState {
         const KEM_CT_LEN: usize,
         const KEM_SHK_LEN: usize,
         KemImpl: Kem<KEM_SK_LEN, KEM_PK_LEN, KEM_CT_LEN, KEM_SHK_LEN>,
+        TV: TestVector
     >(
         &mut self,
         kem: &KemImpl,
         ct: &mut [u8; KEM_CT_LEN],
         pk: &[u8; KEM_PK_LEN],
+        _test_vec_marker: PhantomData<TV>,
     ) -> Result<&mut Self> {
+        let test_values: EncapsAndMixTestValues<KEM_CT_LEN, KEM_SHK_LEN> = TV::initialize_values();
         let mut shk = Secret::<KEM_SHK_LEN>::zero();
         kem.encaps(shk.secret_mut(), ct, pk)?;
+        TV::expose_mut_value(&test_values.shk, &mut shk);
+        TV::expose_mut_value(&test_values.ct, ct);
         self.mix(pk)?.mix(shk.secret())?.mix(ct)
     }
 
@@ -3193,12 +3215,13 @@ impl HandshakeState {
     ///
     /// This is used to store the responder state between [InitHello] and [InitConf] processing
     /// to make sure the responder is stateless.
-    pub fn store_biscuit(
+    pub fn store_biscuit<TV: TestVector>(
         &mut self,
-        srv: &mut CryptoServer,
+        srv: &mut CryptoServer<TV>,
         peer: PeerPtr,
         biscuit_ct: &mut [u8],
     ) -> Result<&mut Self> {
+        let test_values: StoreBiscuitTestValues = TV::initialize_values();
         let mut biscuit = Secret::<BISCUIT_PT_LEN>::zero(); // pt buffer
         let mut biscuit: Ref<&mut [u8], Biscuit> =
             Ref::new(biscuit.secret_mut().as_mut_slice()).unwrap();
@@ -3211,6 +3234,8 @@ impl HandshakeState {
         biscuit
             .ck
             .copy_from_slice(self.ck.clone().danger_into_secret().secret());
+
+        TV::check_value(&test_values.biscuit, &biscuit.as_bytes().to_vec());
 
         // calculate ad contents
         let ad = hash_domains::biscuit_ad(peer.get(srv).protocol_version.keyed_hash())?
@@ -3226,19 +3251,23 @@ impl HandshakeState {
         // TODO: This is premature optimization. Remove!
         let bk = srv.active_biscuit_key();
         let mut n = XAEADNonce::random();
+
+        TV::expose_mut_value(&test_values.n, &mut n);
+
         n[0] &= 0b0111_1111;
         n[0] |= (bk.0 as u8 & 0x1) << 7;
 
         let k = bk.get(srv).value.secret();
         let pt = biscuit.as_bytes();
         XAead.encrypt_with_nonce_in_ctxt(biscuit_ct, k, &*n, &ad, pt)?;
+        TV::check_value(&test_values.biscuit_ct, &biscuit_ct.to_vec());
 
         self.mix(biscuit_ct)
     }
 
     /// This is the counterpart to [Self::store_biscuit] that restores a stored biscuit
-    pub fn load_biscuit(
-        srv: &CryptoServer,
+    pub fn load_biscuit<TV: TestVector>(
+        srv: &CryptoServer<TV>,
         biscuit_ct: &[u8],
         sidi: SessionId,
         sidr: SessionId,
@@ -3290,9 +3319,9 @@ impl HandshakeState {
     /// This called by either party.
     ///
     /// `role` indicates whether the local peer was an initiator or responder in the handshake.
-    pub fn enter_live(
+    pub fn enter_live<TV: TestVector>(
         self,
-        srv: &CryptoServer,
+        srv: &CryptoServer<TV>,
         role: HandshakeRole,
         either_shake_or_blake: KeyedHash,
     ) -> Result<Session> {
@@ -3323,7 +3352,7 @@ impl HandshakeState {
     }
 }
 
-impl CryptoServer {
+impl<TV: TestVector> CryptoServer<TV> {
     /// Variant of [Self::osk] that allows a custom, already compressed domain separator to be specified
     ///
     /// Refer to the documentation of [Self::osk] for more information.
@@ -3396,10 +3425,12 @@ macro_rules! protocol_section {
     }};
 }
 
-impl CryptoServer {
+impl<TV: TestVector> CryptoServer<TV> {
     /// Core cryptographic protocol implementation: Kicks of the handshake
     /// on the initiator side, producing the InitHello message.
     pub fn handle_initiation(&mut self, peer: PeerPtr, ih: &mut InitHello) -> Result<PeerPtr> {
+        let test_values: HandleInitiationTestValues = TV::initialize_values();
+
         #[cfg(feature = "trace_bench")]
         let _span_guard = rosenpass_util::trace_bench::trace().emit_span("handle_initiation");
 
@@ -3407,6 +3438,9 @@ impl CryptoServer {
             self,
             peer.get(self).protocol_version.keyed_hash(),
         );
+
+        // hs.cookie_value.created_at = tv_const!(hs.cookie_value.created_at, "init_handshake-cookie-created_at");
+        TV::expose_mut_value(&test_values.init_handshake_cookie, &mut hs.cookie_value.value);
 
         // IHI1
         protocol_section!("IHI1", {
@@ -3416,24 +3450,31 @@ impl CryptoServer {
         // IHI2
         protocol_section!("IHI2", {
             hs.core.sidi.randomize();
+            TV::expose_mut_value(&test_values.init_handshake_sidi, &mut hs.core.sidi);
             ih.sidi.copy_from_slice(&hs.core.sidi.value);
         });
 
         // IHI3
         protocol_section!("IHI3", {
             EphemeralKem.keygen(hs.eski.secret_mut(), &mut *hs.epki)?;
+            TV::expose_mut_value(&test_values.init_handshake_eski, &mut hs.eski);
+            TV::expose_mut_value(&test_values.init_handshake_epki, &mut hs.epki);
             ih.epki.copy_from_slice(&hs.epki.value);
         });
 
         // IHI4
         protocol_section!("IHI4", {
             hs.core.mix(ih.sidi.as_slice())?.mix(ih.epki.as_slice())?;
+            TV::check_value(&test_values.init_handshake_mix_1,
+                &hs.core.ck.clone().danger_into_secret());
         });
 
         // IHI5
         protocol_section!("IHI5", {
             hs.core
-                .encaps_and_mix(&StaticKem, &mut ih.sctr, peer.get(self).spkt.deref())?;
+                .encaps_and_mix(&StaticKem, &mut ih.sctr, peer.get(self).spkt.deref(), PhantomData::<TV>::default())?;
+            TV::check_value(&test_values.init_handshake_mix_2,
+                &hs.core.ck.clone().danger_into_secret());
         });
 
         // IHI6
@@ -3443,6 +3484,13 @@ impl CryptoServer {
                 self.pidm(peer.get(self).protocol_version.keyed_hash())?
                     .as_ref(),
             )?;
+            TV::check_value(&test_values.init_hello_pidic,
+                &ih.pidic
+            );
+            TV::check_value(
+                &test_values.init_handshake_mix_3,
+                &hs.core.ck.clone().danger_into_secret()
+            );
         });
 
         // IHI7
@@ -3450,16 +3498,27 @@ impl CryptoServer {
             hs.core
                 .mix(self.spkm.deref())?
                 .mix(peer.get(self).psk.secret())?;
+            TV::check_value(
+                &test_values.init_handshake_mix_4,
+                &hs.core.ck.clone().danger_into_secret()
+            );
         });
 
         // IHI8
         protocol_section!("IHI8", {
             hs.core.encrypt_and_mix(ih.auth.as_mut_slice(), &[])?;
+            TV::check_value(
+                &test_values.init_hello_auth,
+                &ih.auth
+            );
+            TV::check_value(
+                &test_values.init_handshake_mix_5,
+                &hs.core.ck.clone().danger_into_secret()
+            );
         });
 
         // Update the handshake hash last (not changing any state on prior error
         peer.hs().insert(self, hs)?;
-
         Ok(peer)
     }
 
@@ -3471,6 +3530,8 @@ impl CryptoServer {
         rh: &mut RespHello,
         keyed_hash: KeyedHash,
     ) -> Result<PeerPtr> {
+        let test_values: HandleInitHelloTestValues = TV::initialize_values();
+
         #[cfg(feature = "trace_bench")]
         let _span_guard = rosenpass_util::trace_bench::trace().emit_span("handle_init_hello");
 
@@ -3487,11 +3548,15 @@ impl CryptoServer {
         protocol_section!("IHR4", {
             core.mix(&ih.sidi)?.mix(&ih.epki)?;
         });
+        TV::check_value(&test_values.chaining_key_ihr_4,
+                        &core.ck.clone().danger_into_secret());
 
         // IHR5
         protocol_section!("IHR5", {
             core.decaps_and_mix(&StaticKem, self.sskm.secret(), self.spkm.deref(), &ih.sctr)?;
         });
+        TV::check_value(&test_values.chaining_key_ihr_5,
+                        &core.ck.clone().danger_into_secret());
 
         // IHR6
         let peer = protocol_section!("IHR6", {
@@ -3500,21 +3565,28 @@ impl CryptoServer {
             self.find_peer(peerid)
                 .with_context(|| format!("No such peer {peerid:?}."))?
         });
+        TV::check_value(&test_values.chaining_key_ihr_6,
+                        &core.ck.clone().danger_into_secret());
 
         // IHR7
         protocol_section!("IHR7", {
             core.mix(peer.get(self).spkt.deref())?
                 .mix(peer.get(self).psk.secret())?;
         });
+        TV::check_value(&test_values.chaining_key_ihr_7,
+                        &core.ck.clone().danger_into_secret());
 
         // IHR8
         protocol_section!("IHR8", {
             core.decrypt_and_mix(&mut [0u8; 0], &ih.auth)?;
         });
+        TV::check_value(&test_values.chaining_key_ihr_8,
+                        &core.ck.clone().danger_into_secret());
 
         // RHR1
         protocol_section!("RHR1", {
             core.sidr.randomize();
+            TV::expose_mut_value(&test_values.session_id, &mut core.sidr);
             rh.sidi.copy_from_slice(core.sidi.as_ref());
             rh.sidr.copy_from_slice(core.sidr.as_ref());
         });
@@ -3522,28 +3594,38 @@ impl CryptoServer {
         // RHR3
         protocol_section!("RHR3", {
             core.mix(&rh.sidr)?.mix(&rh.sidi)?;
+            TV::check_value(&test_values.chaining_key_rhr_3,
+                        &core.ck.clone().danger_into_secret());
         });
 
         // RHR4
         protocol_section!("RHR4", {
-            core.encaps_and_mix(&EphemeralKem, &mut rh.ecti, &ih.epki)?;
+            core.encaps_and_mix(&EphemeralKem, &mut rh.ecti, &ih.epki, PhantomData::<TV>::default())?;
+            TV::check_value(&test_values.chaining_key_rhr_4,
+                        &core.ck.clone().danger_into_secret());
         });
 
         // RHR5
         protocol_section!("RHR5", {
-            core.encaps_and_mix(&StaticKem, &mut rh.scti, peer.get(self).spkt.deref())?;
+            core.encaps_and_mix(&StaticKem, &mut rh.scti, peer.get(self).spkt.deref(),
+                PhantomData::<TV>::default())?;
+            TV::check_value(&test_values.chaining_key_rhr_5,
+                        &core.ck.clone().danger_into_secret());
         });
 
         // RHR6
         protocol_section!("RHR6", {
             core.store_biscuit(self, peer, &mut rh.biscuit)?;
+            TV::check_value(&test_values.chaining_key_rhr_6,
+                        &core.ck.clone().danger_into_secret());
         });
 
         // RHR7
         protocol_section!("RHR7", {
             core.encrypt_and_mix(&mut rh.auth, &[])?;
+            TV::check_value(&test_values.chaining_key_rhr_7,
+                        &core.ck.clone().danger_into_secret());
         });
-
         Ok(peer)
     }
 
