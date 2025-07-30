@@ -1,15 +1,14 @@
-
+use crate::msgs::SESSION_ID_LEN;
+use crate::protocol::basic_types::SessionId;
+use crate::protocol::constants::COOKIE_VALUE_LEN;
 use anyhow::anyhow;
 use assert_tv::TestValue;
 use assert_tv::TestVectorSet;
 use base64::Engine;
-use serde_json::Value;
 use rosenpass_cipher_traits::primitives::{Aead, Kem};
-use rosenpass_secret_memory::{Public, PublicBox, Secret};
-use crate::protocol::constants::{COOKIE_VALUE_LEN};
-use crate::msgs::SESSION_ID_LEN;
 use rosenpass_ciphers::{EphemeralKem, XAead, KEY_LEN};
-use crate::protocol::basic_types::SessionId;
+use rosenpass_secret_memory::{Public, PublicBox, Secret};
+use serde_json::Value;
 
 #[derive(TestVectorSet)]
 pub struct EncapsAndMixTestValues<const KEM_CT_LEN: usize, const KEM_SHK_LEN: usize> {
@@ -18,7 +17,7 @@ pub struct EncapsAndMixTestValues<const KEM_CT_LEN: usize, const KEM_SHK_LEN: us
     pub ct: TestValue<[u8; KEM_CT_LEN]>,
     #[test_vec(serialize_with = "serialize_secret")]
     #[test_vec(deserialize_with = "deserialize_secret")]
-    pub shk: TestValue<Secret<KEM_SHK_LEN>>
+    pub shk: TestValue<Secret<KEM_SHK_LEN>>,
 }
 
 #[derive(TestVectorSet)]
@@ -68,7 +67,6 @@ pub struct HandleInitiationTestValues {
     #[test_vec(deserialize_with = "deserialize_secret")]
     pub init_handshake_mix_2: TestValue<Secret<KEY_LEN>>,
 
-
     #[test_vec(name = "ih.pidic")]
     #[test_vec(serialize_with = "serialize_byte_arr")]
     #[test_vec(deserialize_with = "deserialize_byte_arr")]
@@ -78,7 +76,6 @@ pub struct HandleInitiationTestValues {
     #[test_vec(serialize_with = "serialize_secret")]
     #[test_vec(deserialize_with = "deserialize_secret")]
     pub init_handshake_mix_3: TestValue<Secret<KEY_LEN>>,
-
 
     #[test_vec(name = "hs.core.ck 4")]
     #[test_vec(serialize_with = "serialize_secret")]
@@ -95,7 +92,6 @@ pub struct HandleInitiationTestValues {
     #[test_vec(deserialize_with = "deserialize_secret")]
     pub init_handshake_mix_5: TestValue<Secret<KEY_LEN>>,
 }
-
 
 #[derive(TestVectorSet)]
 pub struct HandleInitHelloTestValues {
@@ -129,7 +125,6 @@ pub struct HandleInitHelloTestValues {
     #[test_vec(deserialize_with = "deserialize_public")]
     pub session_id: TestValue<SessionId>,
 
-
     #[test_vec(name = "chaining_key_ihr RHR 3")]
     #[test_vec(serialize_with = "serialize_secret")]
     #[test_vec(deserialize_with = "deserialize_secret")]
@@ -145,12 +140,10 @@ pub struct HandleInitHelloTestValues {
     #[test_vec(deserialize_with = "deserialize_secret")]
     pub chaining_key_rhr_5: TestValue<Secret<KEY_LEN>>,
 
-
     #[test_vec(name = "chaining_key_ihr RHR 6")]
     #[test_vec(serialize_with = "serialize_secret")]
     #[test_vec(deserialize_with = "deserialize_secret")]
     pub chaining_key_rhr_6: TestValue<Secret<KEY_LEN>>,
-
 
     #[test_vec(name = "chaining_key_ihr RHR 7")]
     #[test_vec(serialize_with = "serialize_secret")]
@@ -160,7 +153,6 @@ pub struct HandleInitHelloTestValues {
 
 #[derive(TestVectorSet)]
 pub struct InitHandshakeTestValues {
-
     #[test_vec(serialize_with = "serialize_byte_vec")]
     #[test_vec(deserialize_with = "deserialize_byte_vec")]
     pub msg: TestValue<Vec<u8>>,
@@ -168,13 +160,12 @@ pub struct InitHandshakeTestValues {
 
 #[derive(TestVectorSet)]
 pub struct CycledBiscuitSecretKeyTestValues {
-    #[test_vec(name="CryptoServer::biscuit_key[r]")]
-    #[test_vec(description="Biscuit key after being cycled")]
+    #[test_vec(name = "CryptoServer::biscuit_key[r]")]
+    #[test_vec(description = "Biscuit key after being cycled")]
     #[test_vec(serialize_with = "serialize_secret")]
     #[test_vec(deserialize_with = "deserialize_secret")]
-    pub cycled_biscuit_secret_key: TestValue<Secret<KEY_LEN>>
+    pub cycled_biscuit_secret_key: TestValue<Secret<KEY_LEN>>,
 }
-
 
 pub fn serialize_secret<const N: usize>(observed_value: &Secret<N>) -> anyhow::Result<Value> {
     let encoded = base64::engine::general_purpose::STANDARD.encode(observed_value.secret());
@@ -182,26 +173,33 @@ pub fn serialize_secret<const N: usize>(observed_value: &Secret<N>) -> anyhow::R
 }
 
 pub fn deserialize_secret<const N: usize>(value: &Value) -> anyhow::Result<Secret<N>> {
-    let value: &str = value.as_str().ok_or_else(|| anyhow!("Unexpected value, expected string"))?;
-    let decoded = base64::engine::general_purpose::STANDARD.decode(value).map_err(|e| anyhow!("Couldn't decode value: {e}"))?;
+    let value: &str = value
+        .as_str()
+        .ok_or_else(|| anyhow!("Unexpected value, expected string"))?;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|e| anyhow!("Couldn't decode value: {e}"))?;
     Ok(Secret::<N>::from_slice(decoded.as_slice()))
 }
 
-
-pub fn serialize_public_box<const N: usize>(observed_value: &PublicBox<N>) -> anyhow::Result<Value> {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(observed_value.inner.value.as_slice());
+pub fn serialize_public_box<const N: usize>(
+    observed_value: &PublicBox<N>,
+) -> anyhow::Result<Value> {
+    let encoded =
+        base64::engine::general_purpose::STANDARD.encode(observed_value.inner.value.as_slice());
     Ok(Value::String(encoded))
 }
 
 pub fn deserialize_public_box<const N: usize>(value: &Value) -> anyhow::Result<PublicBox<N>> {
-    let value: &str = value.as_str().ok_or_else(|| anyhow!("Unexpected value, expected string"))?;
+    let value: &str = value
+        .as_str()
+        .ok_or_else(|| anyhow!("Unexpected value, expected string"))?;
     let decoded = base64::engine::general_purpose::STANDARD
-        .decode(value.as_bytes()).map_err(|e| anyhow!("Couldn't decode value: {e}"))?;
+        .decode(value.as_bytes())
+        .map_err(|e| anyhow!("Couldn't decode value: {e}"))?;
     let mut trg = Box::new(Public::<N>::zero());
     trg.copy_from_slice(decoded.as_slice());
-    let trg = PublicBox {
-        inner: trg,
-    };
+    let trg = PublicBox { inner: trg };
     Ok(trg)
 }
 
@@ -211,9 +209,12 @@ pub fn serialize_public<const N: usize>(observed_value: &Public<N>) -> anyhow::R
 }
 
 pub fn deserialize_public<const N: usize>(value: &Value) -> anyhow::Result<Public<N>> {
-    let value: &str = value.as_str().ok_or_else(|| anyhow!("Unexpected value, expected string"))?;
+    let value: &str = value
+        .as_str()
+        .ok_or_else(|| anyhow!("Unexpected value, expected string"))?;
     let decoded = base64::engine::general_purpose::STANDARD
-        .decode(value.as_bytes()).map_err(|e| anyhow!("Couldn't decode value: {e}"))?;
+        .decode(value.as_bytes())
+        .map_err(|e| anyhow!("Couldn't decode value: {e}"))?;
     Ok(Public::<N>::from_slice(decoded.as_slice()))
 }
 
@@ -223,10 +224,16 @@ pub fn serialize_byte_arr<const N: usize>(observed_value: &[u8; N]) -> anyhow::R
 }
 
 pub fn deserialize_byte_arr<const N: usize>(value: &Value) -> anyhow::Result<[u8; N]> {
-    let value: &str = value.as_str().ok_or_else(|| anyhow!("Unexpected value, expected string"))?;
+    let value: &str = value
+        .as_str()
+        .ok_or_else(|| anyhow!("Unexpected value, expected string"))?;
     let decoded = base64::engine::general_purpose::STANDARD
-        .decode(value.as_bytes()).map_err(|e| anyhow!("Couldn't decode value: {e}"))?;
-    decoded.as_slice().try_into().map_err(|e| anyhow!("Couldn't convert to array of size={}: {e}", N))
+        .decode(value.as_bytes())
+        .map_err(|e| anyhow!("Couldn't decode value: {e}"))?;
+    decoded
+        .as_slice()
+        .try_into()
+        .map_err(|e| anyhow!("Couldn't convert to array of size={}: {e}", N))
 }
 
 pub fn serialize_byte_vec(observed_value: &Vec<u8>) -> anyhow::Result<Value> {
@@ -235,8 +242,11 @@ pub fn serialize_byte_vec(observed_value: &Vec<u8>) -> anyhow::Result<Value> {
 }
 
 pub fn deserialize_byte_vec(value: &Value) -> anyhow::Result<Vec<u8>> {
-    let value: &str = value.as_str().ok_or_else(|| anyhow!("Unexpected value, expected string"))?;
+    let value: &str = value
+        .as_str()
+        .ok_or_else(|| anyhow!("Unexpected value, expected string"))?;
     let decoded = base64::engine::general_purpose::STANDARD
-        .decode(value.as_bytes()).map_err(|e| anyhow!("Couldn't decode value: {e}"))?;
+        .decode(value.as_bytes())
+        .map_err(|e| anyhow!("Couldn't decode value: {e}"))?;
     Ok(decoded)
 }
