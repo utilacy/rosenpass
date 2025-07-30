@@ -134,10 +134,10 @@ fn crypto_server_test_vector_1() -> anyhow::Result<()> {
     // initialize server and a pre-shared key
     let psk = TV::expose_value(&test_values.psk, SymKey::random());
 
-    let mut a = CryptoServer::<TV>::new(peer_a_sk, peer_a_pk.clone());
+    let mut a = CryptoServer::<TV>::new_with_test_vector(peer_a_sk, peer_a_pk.clone());
     de_randomize_time_base_cookie_secrets::<TV>(&mut a);
 
-    let mut b = CryptoServer::<TV>::new(peer_b_sk, peer_b_pk.clone());
+    let mut b = CryptoServer::<TV>::new_with_test_vector(peer_b_sk, peer_b_pk.clone());
     de_randomize_time_base_cookie_secrets::<TV>(&mut b);
 
     // introduce peers to each other

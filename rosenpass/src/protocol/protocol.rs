@@ -145,7 +145,7 @@ pub struct CryptoServer<TV: TestVector = TestVectorNOP> {
     /// Marker to tie this server to the state of the selected [assert_tv::TestVector] context.
     /// In a production context, this defaults to [assert_tv::TestVectorNOP] which disabled all test-vectors.
     /// In tests where test vectors are checked or initialized, this is selected to be [assert_tv::TestVectorActive].
-    _test_vector_context: PhantomData<TV>,
+    pub _test_vector_context: PhantomData<TV>,
 }
 
 /// Specifies the protocol version used by a peer.
@@ -1164,7 +1164,7 @@ impl KnownInitConfResponsePtr {
 
 // DATABASE //////////////////////////////////////
 
-impl<TV: TestVector> CryptoServer<TV> {
+impl CryptoServer {
     /// Constructing a CryptoServer
     ///
     /// # Examples
@@ -1186,7 +1186,29 @@ impl<TV: TestVector> CryptoServer<TV> {
     ///
     /// Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn new(sk: SSk, pk: SPk) -> CryptoServer<TV> {
+    pub fn new(sk: SSk, pk: SPk) -> CryptoServer {
+        let tb = Timebase::default();
+        CryptoServer {
+            sskm: sk,
+            spkm: pk,
+
+            // Defaults
+            timebase: tb,
+            biscuit_ctr: BiscuitId::new([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), // 1, LSB
+            biscuit_keys: [CookieStore::new(), CookieStore::new()],
+            peers: Vec::new(),
+            index: HashMap::new(),
+            known_response_hasher: KnownResponseHasher::new(),
+            peer_poll_off: 0,
+            cookie_secrets: [CookieStore::new(), CookieStore::new()],
+            _test_vector_context: Default::default(),
+        }
+    }
+}
+
+impl<TV: TestVector> CryptoServer<TV> {
+
+    pub fn new_with_test_vector(sk: SSk, pk: SPk) -> CryptoServer<TV> {
         let tb = Timebase::default();
         CryptoServer {
             sskm: sk,
