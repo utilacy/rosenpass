@@ -1,4 +1,3 @@
-use assert_tv::TestVectorNOP;
 use rosenpass_cipher_traits::primitives::Kem;
 use rosenpass_ciphers::StaticKem;
 use rosenpass_util::result::OkExt;
@@ -580,7 +579,7 @@ impl ServerPtr {
                     let mut buf = MsgBuf::zero();
                     let len = self
                         .srv_mut(sim)
-                        .initiate_handshake::<TestVectorNOP>(other_peer, &mut buf[..])?;
+                        .initiate_handshake(other_peer, &mut buf[..])?;
                     self.enqueue_upcoming_poll_transmission(
                         sim,
                         buf[..len].to_vec(),
@@ -639,7 +638,7 @@ impl ServerPtr {
             )
         } else {
             self.srv_mut(sim)
-                .handle_msg::<TestVectorNOP>(rx_msg.borrow(), tx_buf.borrow_mut())
+                .handle_msg(rx_msg.borrow(), tx_buf.borrow_mut())
         };
 
         // Handle bad messages

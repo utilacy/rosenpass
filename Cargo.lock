@@ -2185,6 +2185,8 @@ dependencies = [
  "allocator-api2",
  "allocator-api2-tests",
  "anyhow",
+ "assert_tv",
+ "base64",
  "base64ct",
  "log",
  "memsec",
@@ -2192,6 +2194,8 @@ dependencies = [
  "rand 0.8.5",
  "rosenpass-to",
  "rosenpass-util",
+ "serde",
+ "serde_json",
  "tempfile",
  "zeroize",
 ]

@@ -1,7 +1,6 @@
 use std::ops::DerefMut;
 
 use anyhow::Result;
-use assert_tv::TestVectorNOP;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use rosenpass_cipher_traits::primitives::Kem;
@@ -22,7 +21,7 @@ fn handle(
     let HandleMsgResult {
         exchanged_with: xch,
         resp,
-    } = rx.handle_msg::<TestVectorNOP>(&msgb[..msgl], &mut **resb)?;
+    } = rx.handle_msg(&msgb[..msgl], &mut **resb)?;
     assert!(matches!(xch, None | Some(PeerPtr(0))));
 
     let xch = xch.map(|p| rx.osk(p).unwrap());
@@ -37,7 +36,7 @@ fn handle(
 
 fn hs(ini: &mut CryptoServer, res: &mut CryptoServer) -> Result<()> {
     let (mut inib, mut resb) = (MsgBuf::zero(), MsgBuf::zero());
-    let sz = ini.initiate_handshake::<TestVectorNOP>(PeerPtr(0), &mut *inib)?;
+    let sz = ini.initiate_handshake(PeerPtr(0), &mut *inib)?;
     let (kini, kres) = handle(ini, &mut inib, sz, res, &mut resb)?;
     assert!(kini.unwrap().secret() == kres.unwrap().secret());
     Ok(())

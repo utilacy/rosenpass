@@ -10,13 +10,13 @@ use std::collections::hash_map::{
     Entry::{Occupied, Vacant},
     HashMap,
 };
-use std::marker::PhantomData;
 use std::{
     borrow::Borrow,
     fmt::{Debug, Display},
     mem::size_of,
     ops::Deref,
 };
+use std::marker::PhantomData;
 use zerocopy::{AsBytes, FromBytes, Ref};
 
 use rosenpass_cipher_traits::primitives::{
@@ -34,7 +34,7 @@ use rosenpass_util::{
     time::Timebase,
 };
 
-use crate::test_vector_sets::{
+use crate::protocol::test_vector_sets::{
     CycledBiscuitSecretKeyTestValues, EncapsAndMixTestValues, HandleInitHelloTestValues,
     HandleInitiationTestValues, StoreBiscuitTestValues,
 };
@@ -1396,7 +1396,20 @@ impl CryptoServer {
     /// the oldest biscuit will be replaced with a fresh one using [CookieStore::randomize].
     ///
     /// Swap the biscuit keys, also advancing both biscuit key's mortality
-    pub fn active_biscuit_key<TV: TestVector>(&mut self) -> BiscuitKeyPtr {
+    pub fn active_biscuit_key(&mut self) -> BiscuitKeyPtr {
+        self.active_biscuit_key_with_test_vector::<TestVectorNOP>()
+    }
+
+    /// Generic variant that allows selecting a [`TestVector`] implementation.
+    ///
+    /// This function is primarily intended for testing with different
+    /// test vector strategies. In production code, prefer using
+    /// [`Self::active_biscuit_key`], which defaults to [`assert_tv::TestVectorNOP`].
+    ///
+    /// Use this function with [`TestVectorActive`] in tests that require
+    /// applying actual test vectors. See the `tests::test_vector_crypto_server`
+    /// test for an example
+    pub fn active_biscuit_key_with_test_vector<TV: TestVector>(&mut self) -> BiscuitKeyPtr {
         let (a, b) = (BiscuitKeyPtr(0), BiscuitKeyPtr(1));
         let (t, u) = (a.get(self).created_at, b.get(self).created_at);
 
@@ -1875,7 +1888,20 @@ impl CryptoServer {
     /// See the example on how to use this function without [Self::poll] in [crate::protocol].
     ///
     /// See [Self::poll] on how to use this function with poll.
-    pub fn initiate_handshake<TV: TestVector>(
+    pub fn initiate_handshake(&mut self, peer: PeerPtr, tx_buf: &mut [u8]) -> Result<usize> {
+        self.initiate_handshake_with_test_vector::<TestVectorNOP>(peer, tx_buf)
+    }
+
+    /// Generic variant that allows selecting a [`TestVector`] implementation.
+    ///
+    /// This function is primarily intended for testing with different
+    /// test vector strategies. In production code, prefer using
+    /// [`Self::initiate_handshake`], which defaults to [`assert_tv::TestVectorNOP`].
+    ///
+    /// Use this function with [`TestVectorActive`] in tests that require
+    /// applying actual test vectors. See the `tests::test_vector_crypto_server`
+    /// test for an example
+    pub fn initiate_handshake_with_test_vector<TV: TestVector>(
         &mut self,
         peer: PeerPtr,
         tx_buf: &mut [u8],
@@ -1886,7 +1912,7 @@ impl CryptoServer {
         //
         // Envelope::<InitHello>::default(); // TODO
         let mut msg = truncating_cast_into::<Envelope<InitHello>>(tx_buf)?;
-        self.handle_initiation::<TV>(peer, &mut msg.payload)?;
+        self.handle_initiation_with_test_vector::<TV>(peer, &mut msg.payload)?;
         let len = self.seal_and_commit_msg(peer, MsgType::InitHello, &mut msg)?;
         peer.hs()
             .store_msg_for_retransmission(self, msg.as_bytes())?;
@@ -1960,7 +1986,7 @@ impl CryptoServer {
         tx_buf: &mut [u8],
         host_identification: &H,
     ) -> Result<HandleMsgResult> {
-        self.handle_msg::<TestVectorNOP>(rx_buf, tx_buf)
+        self.handle_msg(rx_buf, tx_buf)
     }
 
     #[cfg(feature = "experiment_cookie_dos_mitigation")]
@@ -1982,7 +2008,7 @@ impl CryptoServer {
                     msg_type,
                     host_identification
                 );
-                return self.handle_msg::<TestVectorNOP>(rx_buf, tx_buf);
+                return self.handle_msg(rx_buf, tx_buf);
             }
             Ok(MsgType::InitHello) => {
                 //Process message (continued below)
@@ -2034,7 +2060,7 @@ impl CryptoServer {
                         msg_type,
                         host_identification
                     );
-                    let result = self.handle_msg::<TestVectorNOP>(rx_buf, tx_buf)?;
+                    let result = self.handle_msg(rx_buf, tx_buf)?;
                     return Ok(result);
                 }
             } else {
@@ -2125,7 +2151,25 @@ impl CryptoServer {
     /// See the example on how to use this function without [Self::poll] in [crate::protocol].
     ///
     /// See [Self::poll] on how to use this function with poll.
-    pub fn handle_msg<TV: TestVector>(
+    pub fn handle_msg(
+        &mut self,
+        rx_buf: &[u8],
+        tx_buf: &mut [u8],
+    ) -> Result<HandleMsgResult> {
+        self.handle_msg_with_test_vector::<TestVectorNOP>(rx_buf, tx_buf)
+    }
+
+    /// Generic message handler that allows selecting a [`TestVector`]
+    /// implementation.
+    ///
+    /// This function is primarily intended for **testing** with different
+    /// test vector strategies. In production code, prefer using
+    /// [`Self::handle_msg`], which defaults to [`assert_tv::TestVectorNOP`].
+    ///
+    /// Use this function with [`TestVectorActive`] in tests that require
+    /// applying actual test vectors. See the `tests::test_vector_crypto_server`
+    /// test for an example
+    pub fn handle_msg_with_test_vector<TV: TestVector>(
         &mut self,
         rx_buf: &[u8],
         tx_buf: &mut [u8],
@@ -2150,7 +2194,7 @@ impl CryptoServer {
 
                 // At this point, we do not know the hash functon used by the peer, thus we try both,
                 // with a preference for SHAKE256.
-                let peer_shake256 = self.handle_init_hello::<TV>(
+                let peer_shake256 = self.handle_init_hello_with_test_vector::<TV>(
                     &msg_in.payload,
                     &mut msg_out.payload,
                     KeyedHash::keyed_shake256(),
@@ -2158,11 +2202,11 @@ impl CryptoServer {
                 let (peer, peer_hash_choice) = match peer_shake256 {
                     Ok(peer) => (peer, KeyedHash::keyed_shake256()),
                     Err(_) => {
-                        let peer_blake2b = self.handle_init_hello::<TV>(
-                            &msg_in.payload,
-                            &mut msg_out.payload,
-                            KeyedHash::incorrect_hmac_blake2b(),
-                        );
+                                let peer_blake2b = self.handle_init_hello_with_test_vector::<TV>(
+                                    &msg_in.payload,
+                                    &mut msg_out.payload,
+                                    KeyedHash::incorrect_hmac_blake2b(),
+                                );
                         match peer_blake2b {
                             Ok(peer) => (peer, KeyedHash::incorrect_hmac_blake2b()),
                             Err(_) => bail!("No valid hash function found for InitHello"),
@@ -2286,6 +2330,7 @@ impl CryptoServer {
             resp: if len == 0 { None } else { Some(len) },
         })
     }
+
 
     /// Given a peer and a [KeyedHash] `peer_hash_choice`, this function checks whether the
     /// `peer_hash_choice` matches the hash function that is expected for the peer.
@@ -3172,13 +3217,52 @@ impl HandshakeState {
         const KEM_CT_LEN: usize,
         const KEM_SHK_LEN: usize,
         KemImpl: Kem<KEM_SK_LEN, KEM_PK_LEN, KEM_CT_LEN, KEM_SHK_LEN>,
+    >(
+        &mut self,
+        kem: &KemImpl,
+        ct: &mut [u8; KEM_CT_LEN],
+        pk: &[u8; KEM_PK_LEN],
+    ) -> Result<&mut Self> {
+        self.encaps_and_mix_with_test_vector(
+            kem,
+            ct,
+            pk,
+            std::marker::PhantomData::<TestVectorNOP>,
+        )
+    }
+
+    /// Generic variant that allows selecting a [`TestVector`] implementation.
+    ///
+    /// This function is primarily intended for testing with different
+    /// test vector strategies. In production code, prefer using
+    /// [`Self::encaps_and_mix`], which defaults to [`assert_tv::TestVectorNOP`].
+    ///
+    /// Use this function with [`TestVectorActive`] in tests that require
+    /// applying actual test vectors. See the `tests::test_vector_crypto_server`
+    /// test for an example.
+    ///
+    /// Note on `_tv: PhantomData<TV>` parameter:
+    /// - Rust’s type inference ties generic parameter specification together;
+    ///   explicitly selecting `TV` with turbofish can force you to also spell
+    ///   out the const generics.
+    /// - By adding a value parameter of type `PhantomData<TV>`, you can choose
+    ///   `TV` at the call site while allowing the compiler to infer `KEM_*`
+    ///    const generics from `ct` and `pk`.
+    /// - Call like: `encaps_and_mix_with_test_vector(&StaticKem, &mut ct, pk,
+    ///   PhantomData::<TestVectorActive>)?;`
+    pub fn encaps_and_mix_with_test_vector<
+        const KEM_SK_LEN: usize,
+        const KEM_PK_LEN: usize,
+        const KEM_CT_LEN: usize,
+        const KEM_SHK_LEN: usize,
+        KemImpl: Kem<KEM_SK_LEN, KEM_PK_LEN, KEM_CT_LEN, KEM_SHK_LEN>,
         TV: TestVector,
     >(
         &mut self,
         kem: &KemImpl,
         ct: &mut [u8; KEM_CT_LEN],
         pk: &[u8; KEM_PK_LEN],
-        _test_vec_marker: PhantomData<TV>,
+        _tv: std::marker::PhantomData<TV>,
     ) -> Result<&mut Self> {
         let test_values: EncapsAndMixTestValues<KEM_CT_LEN, KEM_SHK_LEN> = TV::initialize_values();
         let mut shk = Secret::<KEM_SHK_LEN>::zero();
@@ -3217,7 +3301,25 @@ impl HandshakeState {
     ///
     /// This is used to store the responder state between [InitHello] and [InitConf] processing
     /// to make sure the responder is stateless.
-    pub fn store_biscuit<TV: TestVector>(
+    pub fn store_biscuit(
+        &mut self,
+        srv: &mut CryptoServer,
+        peer: PeerPtr,
+        biscuit_ct: &mut [u8],
+    ) -> Result<&mut Self> {
+        self.store_biscuit_with_test_vector::<TestVectorNOP>(srv, peer, biscuit_ct)
+    }
+
+    /// Generic variant that allows selecting a [`TestVector`] implementation.
+    ///
+    /// This function is primarily intended for testing with different
+    /// test vector strategies. In production code, prefer using
+    /// [`Self::store_biscuit`], which defaults to [`assert_tv::TestVectorNOP`].
+    ///
+    /// Use this function with [`TestVectorActive`] in tests that require
+    /// applying actual test vectors. See the `tests::test_vector_crypto_server`
+    /// test for an example
+    pub fn store_biscuit_with_test_vector<TV: TestVector>(
         &mut self,
         srv: &mut CryptoServer,
         peer: PeerPtr,
@@ -3251,7 +3353,7 @@ impl HandshakeState {
 
         // The first bit of the nonce indicates which biscuit key was used
         // TODO: This is premature optimization. Remove!
-        let bk = srv.active_biscuit_key::<TV>();
+        let bk = srv.active_biscuit_key_with_test_vector::<TV>();
         let mut n = XAEADNonce::random();
 
         TV::expose_mut_value(&test_values.n, &mut n);
@@ -3430,7 +3532,20 @@ macro_rules! protocol_section {
 impl CryptoServer {
     /// Core cryptographic protocol implementation: Kicks of the handshake
     /// on the initiator side, producing the InitHello message.
-    pub fn handle_initiation<TV: TestVector>(
+    pub fn handle_initiation(&mut self, peer: PeerPtr, ih: &mut InitHello) -> Result<PeerPtr> {
+        self.handle_initiation_with_test_vector::<TestVectorNOP>(peer, ih)
+    }
+
+    /// Generic variant that allows selecting a [`TestVector`] implementation.
+    ///
+    /// This function is primarily intended for testing with different
+    /// test vector strategies. In production code, prefer using
+    /// [`Self::handle_initiation`], which defaults to [`assert_tv::TestVectorNOP`].
+    ///
+    /// Use this function with [`TestVectorActive`] in tests that require
+    /// applying actual test vectors. See the `tests::test_vector_crypto_server`
+    /// test for an example
+    pub fn handle_initiation_with_test_vector<TV: TestVector>(
         &mut self,
         peer: PeerPtr,
         ih: &mut InitHello,
@@ -3482,11 +3597,12 @@ impl CryptoServer {
 
         // IHI5
         protocol_section!("IHI5", {
-            hs.core.encaps_and_mix(
+            use std::marker::PhantomData;
+            hs.core.encaps_and_mix_with_test_vector(
                 &StaticKem,
                 &mut ih.sctr,
                 peer.get(self).spkt.deref(),
-                PhantomData::<TV>::default(),
+                PhantomData::<TV>,
             )?;
             TV::check_value(
                 &test_values.init_handshake_mix_2,
@@ -3536,7 +3652,25 @@ impl CryptoServer {
 
     /// Core cryptographic protocol implementation: Parses an [InitHello] message and produces a
     /// [RespHello] message on the responder side.
-    pub fn handle_init_hello<TV: TestVector>(
+    pub fn handle_init_hello(
+        &mut self,
+        ih: &InitHello,
+        rh: &mut RespHello,
+        keyed_hash: KeyedHash,
+    ) -> Result<PeerPtr> {
+        self.handle_init_hello_with_test_vector::<TestVectorNOP>(ih, rh, keyed_hash)
+    }
+
+    /// Generic variant that allows selecting a [`TestVector`] implementation.
+    ///
+    /// This function is primarily intended for testing with different
+    /// test vector strategies. In production code, prefer using
+    /// [`Self::handle_init_hello`], which defaults to [`assert_tv::TestVectorNOP`].
+    ///
+    /// Use this function with [`TestVectorActive`] in tests that require
+    /// applying actual test vectors. See the `tests::test_vector_crypto_server`
+    /// test for an example
+    pub fn handle_init_hello_with_test_vector<TV: TestVector>(
         &mut self,
         ih: &InitHello,
         rh: &mut RespHello,
@@ -3624,11 +3758,12 @@ impl CryptoServer {
 
         // RHR4
         protocol_section!("RHR4", {
-            core.encaps_and_mix(
+            use std::marker::PhantomData;
+            core.encaps_and_mix_with_test_vector(
                 &EphemeralKem,
                 &mut rh.ecti,
                 &ih.epki,
-                PhantomData::<TV>::default(),
+                PhantomData::<TV>,
             )?;
             TV::check_value(
                 &test_values.chaining_key_rhr_4,
@@ -3638,11 +3773,12 @@ impl CryptoServer {
 
         // RHR5
         protocol_section!("RHR5", {
-            core.encaps_and_mix(
+            use std::marker::PhantomData;
+            core.encaps_and_mix_with_test_vector(
                 &StaticKem,
                 &mut rh.scti,
                 peer.get(self).spkt.deref(),
-                PhantomData::<TV>::default(),
+                PhantomData::<TV>,
             )?;
             TV::check_value(
                 &test_values.chaining_key_rhr_5,
@@ -3652,7 +3788,7 @@ impl CryptoServer {
 
         // RHR6
         protocol_section!("RHR6", {
-            core.store_biscuit::<TV>(self, peer, &mut rh.biscuit)?;
+            core.store_biscuit_with_test_vector::<TV>(self, peer, &mut rh.biscuit)?;
             TV::check_value(
                 &test_values.chaining_key_rhr_6,
                 &core.ck.clone().danger_into_secret(),

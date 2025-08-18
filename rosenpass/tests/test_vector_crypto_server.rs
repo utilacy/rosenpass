@@ -19,16 +19,12 @@ use assert_tv::{test_vec_case, TestValue, TestVector, TestVectorActive, TestVect
 use rosenpass::protocol::basic_types::{MsgBuf, SPk, SSk, SymKey};
 use rosenpass::protocol::osk_domain_separator::OskDomainSeparator;
 use rosenpass::protocol::{CryptoServer, PeerPtr, ProtocolVersion};
-use rosenpass::test_vector_sets::deserialize_byte_vec;
-use rosenpass::test_vector_sets::deserialize_public_box;
-use rosenpass::test_vector_sets::deserialize_secret;
-use rosenpass::test_vector_sets::serialize_byte_vec;
-use rosenpass::test_vector_sets::serialize_public_box;
-use rosenpass::test_vector_sets::serialize_secret;
+use rosenpass::protocol::test_vector_sets::deserialize_byte_vec;
+use rosenpass::protocol::test_vector_sets::serialize_byte_vec;
 use rosenpass_cipher_traits::primitives::Kem;
 use rosenpass_ciphers::StaticKem;
 use rosenpass_secret_memory::policy::*;
-use rosenpass_secret_memory::{Public, PublicBox, Secret};
+use rosenpass_secret_memory::{PublicBox, Secret};
 use std::ops::DerefMut;
 
 use rosenpass::protocol::constants::COOKIE_SECRET_LEN;
@@ -38,34 +34,24 @@ use rosenpass_ciphers::KEY_LEN;
 pub struct TestCaseValues {
     #[test_vec(name = "peer_a_sk")]
     #[test_vec(description = "test setup: peer a secret key")]
-    #[test_vec(serialize_with = "serialize_secret")]
-    #[test_vec(deserialize_with = "deserialize_secret")]
     #[test_vec(offload = true)]
     peer_a_sk: TestValue<Secret<{ StaticKem::SK_LEN }>>,
     #[test_vec(name = "peer_a_pk")]
     #[test_vec(description = "test setup: peer a public key")]
-    #[test_vec(serialize_with = "serialize_public_box")]
-    #[test_vec(deserialize_with = "deserialize_public_box")]
     #[test_vec(offload = true)]
     peer_a_pk: TestValue<PublicBox<{ StaticKem::PK_LEN }>>,
 
     #[test_vec(name = "peer_b_sk")]
     #[test_vec(description = "test setup: peer b secret key")]
-    #[test_vec(serialize_with = "serialize_secret")]
-    #[test_vec(deserialize_with = "deserialize_secret")]
     #[test_vec(offload = true)]
     peer_b_sk: TestValue<Secret<{ StaticKem::SK_LEN }>>,
     #[test_vec(name = "peer_b_pk")]
     #[test_vec(description = "test setup: peer b public key")]
-    #[test_vec(serialize_with = "serialize_public_box")]
-    #[test_vec(deserialize_with = "deserialize_public_box")]
     #[test_vec(offload = true)]
     peer_b_pk: TestValue<PublicBox<{ StaticKem::PK_LEN }>>,
 
     #[test_vec(name = "psk")]
     #[test_vec(description = "pre-shared key")]
-    #[test_vec(serialize_with = "serialize_secret")]
-    #[test_vec(deserialize_with = "deserialize_secret")]
     psk: TestValue<Secret<KEY_LEN>>,
 
     #[test_vec(name = "message")]
@@ -77,31 +63,21 @@ pub struct TestCaseValues {
 
     #[test_vec(name = "exchanged_key")]
     #[test_vec(description = "final exchanged key")]
-    #[test_vec(serialize_with = "serialize_secret")]
-    #[test_vec(deserialize_with = "deserialize_secret")]
     exchanged_key: TestValue<Secret<KEY_LEN>>,
 }
 
 #[derive(TestVectorSet)]
 struct CryptoServerTestValues {
     #[test_vec(name = "CryptoServer::cookie_secrets[0]")]
-    #[test_vec(serialize_with = "serialize_secret")]
-    #[test_vec(deserialize_with = "deserialize_secret")]
     cookie_secret_0: TestValue<Secret<COOKIE_SECRET_LEN>>,
 
     #[test_vec(name = "CryptoServer::cookie_secrets[1]")]
-    #[test_vec(serialize_with = "serialize_secret")]
-    #[test_vec(deserialize_with = "deserialize_secret")]
     cookie_secret_1: TestValue<Secret<COOKIE_SECRET_LEN>>,
 
     #[test_vec(name = "CryptoServer::biscuit_keys[0]")]
-    #[test_vec(serialize_with = "serialize_secret")]
-    #[test_vec(deserialize_with = "deserialize_secret")]
     biscuit_key_0: TestValue<Secret<KEY_LEN>>,
 
     #[test_vec(name = "CryptoServer::biscuit_keys[1]")]
-    #[test_vec(serialize_with = "serialize_secret")]
-    #[test_vec(deserialize_with = "deserialize_secret")]
     biscuit_key_1: TestValue<Secret<KEY_LEN>>,
 }
 
@@ -152,15 +128,16 @@ fn crypto_server_test_vector_1() -> anyhow::Result<()> {
     let (mut a_buf, mut b_buf) = (MsgBuf::zero(), MsgBuf::zero());
 
     // let a initiate a handshake
-    let mut maybe_len = Some(a.initiate_handshake::<TV>(PeerPtr(0), a_buf.as_mut_slice())?);
-
-    let mut message_index = 0;
+    let mut maybe_len = Some(
+        a.initiate_handshake_with_test_vector::<TV>(PeerPtr(0), a_buf.as_mut_slice())?
+    );
 
     // let a and b communicate
     while let Some(len) = maybe_len {
         TV::check_value(&test_values.message, &a_buf[..len].to_vec());
-        message_index += 1;
-        maybe_len = b.handle_msg::<TV>(&a_buf[..len], &mut b_buf[..])?.resp;
+        maybe_len = b
+            .handle_msg_with_test_vector::<TV>(&a_buf[..len], &mut b_buf[..])?
+            .resp;
         std::mem::swap(&mut a, &mut b);
         std::mem::swap(&mut a_buf, &mut b_buf);
     }
