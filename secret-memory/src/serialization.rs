@@ -1,4 +1,3 @@
-
 use crate::{Public, PublicBox, Secret};
 use base64::Engine;
 use serde::de::{Error as DeError, Visitor};
@@ -15,21 +14,17 @@ fn decode_b64(s: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Couldn't decode base64: {e}"))
 }
 
-struct B64StrVisitor<const N: usize>;
+struct B64BytesVisitor;
 
-impl<'de, const N: usize> Visitor<'de> for B64StrVisitor<N> {
-    type Value = [u8; N];
+impl<'de> Visitor<'de> for B64BytesVisitor {
+    type Value = Vec<u8>;
 
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "a base64-encoded string of length {} bytes", N)
+        write!(f, "a base64-encoded string")
     }
 
     fn visit_str<E: DeError>(self, v: &str) -> Result<Self::Value, E> {
-        let decoded = decode_b64(v).map_err(E::custom)?;
-        decoded
-            .as_slice()
-            .try_into()
-            .map_err(|_| E::custom(format!("Couldn't convert to array of size={}", N)))
+        decode_b64(v).map_err(E::custom)
     }
 
     fn visit_string<E: DeError>(self, v: String) -> Result<Self::Value, E> {
@@ -45,8 +40,17 @@ impl<const N: usize> Serialize for Secret<N> {
 
 impl<'de, const N: usize> Deserialize<'de> for Secret<N> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let arr = deserializer.deserialize_string(B64StrVisitor::<N>)?;
-        Ok(Secret::<N>::from_slice(&arr))
+        let bytes: Vec<u8> = deserializer.deserialize_string(B64BytesVisitor)?;
+        if bytes.len() != N {
+            return Err(D::Error::custom(format!(
+                "Unexpected length: got {}, expected {}",
+                bytes.len(),
+                N
+            )));
+        }
+        // Copies from heap bytes into the internal storage;
+        // no large stack temporaries.
+        Ok(Secret::<N>::from_slice(bytes.as_slice()))
     }
 }
 
@@ -58,8 +62,15 @@ impl<const N: usize> Serialize for Public<N> {
 
 impl<'de, const N: usize> Deserialize<'de> for Public<N> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let arr = deserializer.deserialize_string(B64StrVisitor::<N>)?;
-        Ok(Public::<N>::new(arr))
+        let bytes: Vec<u8> = deserializer.deserialize_string(B64BytesVisitor)?;
+        if bytes.len() != N {
+            return Err(D::Error::custom(format!(
+                "Unexpected length: got {}, expected {}",
+                bytes.len(),
+                N
+            )));
+        }
+        Ok(Public::<N>::from_slice(bytes.as_slice()))
     }
 }
 
@@ -71,8 +82,17 @@ impl<const N: usize> Serialize for PublicBox<N> {
 
 impl<'de, const N: usize> Deserialize<'de> for PublicBox<N> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let arr = deserializer.deserialize_string(B64StrVisitor::<N>)?;
-        Ok(PublicBox::<N>::new(arr))
+        let bytes: Vec<u8> = deserializer.deserialize_string(B64BytesVisitor)?;
+        if bytes.len() != N {
+            return Err(D::Error::custom(format!(
+                "Unexpected length: got {}, expected {}",
+                bytes.len(),
+                N
+            )));
+        }
+        // Allocate Public<N> on the heap and copy bytes into it
+        let mut inner = Box::new(Public::<N>::zero());
+        inner.copy_from_slice(bytes.as_slice());
+        Ok(PublicBox { inner })
     }
 }
-
